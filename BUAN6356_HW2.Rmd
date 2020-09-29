@@ -1,0 +1,308 @@
+---
+title: "BUAN 6356 - Homework 2"
+author: "Group No.9 (Shubhi Kala, Spoorthi Thatipally, Hao-Yu Lin, Loc Nguyen, Tatsat Joshi)"
+date: "2/24/2020"
+output:
+  pdf_document: default
+  html_document: default
+group_number: '9'
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown file
+
+### Install and load necessary packages and check loading  
+```{r loadPackages, message=FALSE, warning=FALSE, results='hide'}
+if(!require("pacman")) install.packages("pacman")
+pacman::p_load(caret, leaps, forecast, tidyverse, GGally, reshape2, MASS, grid, gridExtra)
+search()
+theme_set(theme_classic())
+
+```
+### Read the data from the Airfare.csv
+```{r Load Data}
+airfare.df <- read.csv("Airfares.csv")
+
+# Removing the first 4 predictors from the analysis
+airfare.df <- airfare.df[,-c(1:4)]
+head(airfare.df)
+```
+### Question 1: Correlation table and scatter plots between FARE and other predictors
+```{r Question 1}
+
+cor.mat <- round(cor(airfare.df[,-c(3,4,10,11)]),2)  # rounded correlation matrix
+
+# Correlation Table between numeric variables
+cor.mat
+
+# Check correlation between numeric variables
+corrplot::corrplot(cor.mat, method = "number",type = "upper",tl.srt = 45, bg = "honeydew4")
+
+# Scatter plots between FARE and other predictors
+x <- ggplot(airfare.df) + theme(axis.text.x = element_text(angle = 60, hjust = 1),
+                                axis.text=element_text(size=6),
+                                axis.title=element_text(size=8,face="bold"))
+
+coupon.plot <- x + geom_point(color = "red", aes(COUPON, FARE), alpha = 0.2)
+new.plot <- x + geom_point(color = "red", aes(NEW, FARE), alpha = 0.2)
+hi.plot <- x + geom_point(color = "red", aes(HI, FARE), alpha = 0.2)
+s_income.plot <-x + geom_point(color = "red", aes(S_INCOME, FARE), alpha = 0.2)
+e_income.plot <- x + geom_point(color = "red", aes(E_INCOME, FARE), alpha = 0.2)
+s_pop.plot <- x + geom_point(color = "red", aes(S_POP, FARE), alpha = 0.2)
+e_pop.plot <- x + geom_point(color = "red", aes(E_POP, FARE), alpha = 0.2)
+distance.plot <- x + geom_point(color = "red", aes(DISTANCE, FARE), alpha = 0.2)
+pax.plot <- x + geom_point(color = "red", aes(PAX, FARE), alpha = 0.2)
+
+grid.arrange(coupon.plot, new.plot, hi.plot, s_income.plot, e_income.plot, s_pop.plot,
+             e_pop.plot, distance.plot, pax.plot, nrow = 3)
+
+
+```
+Answer 1: From the above correlation table and correlation plot, we can find that the best single predictor of FARE is DISTANCE because their correlation coefficient is 0.67 which is highest absolute value as compared to other predictors. 
+
+From the plot we find that FARE and DISTANCE have strong positive correlation and are linearly coorelated which means With the increase in the distance between the two endpoint airports the average fare along that route increases.
+
+### Question 2: Explore categorical predictors and create pivot table with average fare in each category
+```{r Question 2 }
+
+vacation<-factor(airfare.df$VACATION)
+vacation_table<-table(vacation)
+round(prop.table(vacation_table),digits=2)
+prop_vac<-round(100*prop.table(vacation_table),digits=0)
+
+sw<-factor(airfare.df$SW)
+sw_table<-table(sw)
+round(prop.table(sw_table),digits=2)
+prop_sw<-round(100*prop.table(sw_table),digits=0)
+
+slot<-factor(airfare.df$SLOT)
+slot_table<-table(slot)
+round(prop.table(slot_table),digits=2)
+prop_slot<-round(100*prop.table(slot_table),digits=0)
+
+gate<-factor(airfare.df$GATE)
+gate_table<-table(gate)
+round(prop.table(gate_table),digits=2)
+prop_gate<-round(100*prop.table(gate_table),digits=0)
+
+data.frame(prop_vac,prop_sw,prop_slot,prop_gate)
+
+print("Percentage of flights in each category")
+
+airfares_melt <- melt(airfare.df, id = c(3,4,10,11), measure.vars = "FARE")
+airfares_castvac <- dcast(airfares_melt, VACATION~ variable, mean)
+airfares_castsw <- dcast(airfares_melt, SW~ variable, mean)
+airfares_castslot <- dcast(airfares_melt, SLOT~ variable, mean)
+airfares_castgate <- dcast(airfares_melt, GATE~ variable, mean)
+airfares_cast.df <- data.frame(airfares_castvac, airfares_castsw, 
+                               airfares_castslot , airfares_castgate)
+print("Average fare in each category")
+airfares_cast.df
+
+```
+
+Answer 2: From the pivote table of mean FARE of different categorical variable, it is observed that there is a drastic diffrence in fares when SouthWest is serving on routes. While SouthWest is serving the fares are 3/7 times lower than FARE when SouthWest is not serving. We can therefore infere that SW is the best for predicting fares as compared to the effect of other variables.
+
+### Question 3: Data partition by assigning 80% to training dataset and 20% to the test dataset. 
+```{r Question 3}
+
+set.seed(42)
+sample_size = round(0.80*nrow(airfare.df))
+train.index <- sample(nrow(airfare.df), sample_size)
+train.df <- airfare.df[train.index,]
+valid.df <- airfare.df[-train.index,]
+```
+
+Answer 3: While creating a predictive model, we don't use the complete data set to train the model but create a training set which is 80% of the data set in this case. On the other hand, the rest 20% of the data is called validation set which is used in evaluating the performance of the model.
+
+### Question 4: Running stepwise regression to reduce the number of predictors.
+```{r Question 4}
+set.seed(42)
+
+# Running stepwise regression to reduce the number of predictors
+af.stepwise <- regsubsets(FARE~ ., data = train.df, nbest = 1, 
+                                   nvmax = dim(train)[2], method = "seqrep")
+af.stepwise
+sum <- summary(af.stepwise)
+
+# show models
+sum$which
+
+# show metrics
+sum$rsq  #gives r square for this model
+sum$adjr2 # gives adjusted r square of the model
+sum$cp #gives the value of Mallow cp
+
+step.lm <- lm(FARE ~ VACATION + SW + HI + E_INCOME + S_POP + E_POP + SLOT + 
+              GATE + DISTANCE + PAX, data = train.df)
+
+step.lm.pred <- predict(step.lm, valid.df)
+accuracy(step.lm.pred, valid.df$FARE)
+
+```
+Answer 4: Interpretation of the model
+1. Stepwise regression consists of iteratively adding and removing predictors, in order to find the subset of variables in the data set resulting in the best performing model.
+
+2. It starts with forward selection and also consider dropping the non significant predictors at each step.
+
+3. regsubsets() method from 'leaps' package is used, it has a tuning parameter 'nvmax' specifying maximum number of predictors to incorporate in the model.
+
+4. regsubsets has the option 'method' which takes values 'exhaustive', 'backward', 'forward' and 'seqrep'(combination of bakward and forward selections) for selections. Here we are using seqrep option.
+
+5. r square, adjusted rsquare and Mallow cp are the values of the chosen model statistic for each model.
+
+6. R-square: This value explains the variation of the variable FARE (dependent variable) with the other thirteen variables in the model. The higher the R square, the better the model.
+We can infer that the value of R square is increasing with the addition of each predictor. Hence, this is not the best statistic to find the model of best fit.
+
+7. Adjusted R-square: On the other hand, the adjusted R square value whose value is dependent upon the number of variables in the model and the value with highest Adjusted R square indicates the best model without including the unneccesary variables. So here the model with 12 variables would be considered the best as its adj r square value is 0.7760708 which is the maximum.
+
+8. Mallow cp: The value of Mallow cp decreases with the increase in the variables in the model. The model with the minimum value of Mallow cp can be considered the best. Here the model 10 has the minimum value(number of variables + 1) therefore we consider the model with variables VACATION, SW, HI, E_INCOME, S_POP, E_POP, SLOT, 
+              GATE, DISTANCE, PAX in the final model.
+              
+9. Finding: As we are searching for the best model based on the cp and adjusted R-squared of each model, we realized there is an abnormal occurrence. DISTANCE has been consistently chosen as a varible for the best models from 1 to 9 variable. However, in the model with 10 variables, it's suddenly dropped. This result may be caused by the choosing varibles technique of stepwise, which consists of iteratively adding and removing predictors, in order to find the subset of variables in the data set resulting in the best performing model. This technique doesn't apply for backward and forward methods.
+
+
+### Question 5: Using exhaustive search to reduce the number of predictors
+```{r Question 5}
+
+#nbest = number of the best subsets of each size to keep in the results
+#Period notation regresses Fare against all the other variables
+
+airfare.lm.exhautive <- regsubsets(FARE~ ., data = train.df, nbest = 1, 
+                                   nvmax = dim(train)[2], method = "exhaustive")
+airfare.lm.exhautive
+sum <- summary(airfare.lm.exhautive)
+
+# show models
+sum$which
+
+# show metrics
+sum$rsq  #gives r square for this model
+
+# show adjusted r sq.
+sum$adjr2
+
+# Show Mallow cp
+sum$cp
+
+```
+Answer 5: 1. The exhaustive search model runs a linear regression model for each combination of variables, giving us predictions for each regression subset. Each regression iteration returns either a TRUE or FALSE value against the set of predictors, indicating their inclusion into the model.
+
+2. r square, adjusted rsquare and Mallow cp are the values of the chosen model statistic for each model.
+
+3. From above we can infer that Intercept is TRUE for every model. The first model will have one predictor true i.e. DISTANCE Then in the second model we have 2 predictors true which are DISTANCE and SW. Similarly, the model 3 has three predictors TRUE which are DISTANCE, SW and VACATION. This is how the most significant variables keeps on adding to the model.
+
+4. To find the best model we have to consider the values of adjusted r square and mallow cp.
+
+5. The model with the maximum adjusted r square will be taken as the best one. The value of adj r square will decrease after that indicating the addition of unneccesary vairables. Here the model with 12 variables can be considered the best.
+
+6. Another statistic for finding the best model is Mallow cp, the value of Mallow cp decrease with the addition of predictors. The model with the minimum cp can be chosen. Here we have chosen the model with 11 predictors as it's cp value is 11.73270, which is the least. Considering the value of cp to choose the best model as it gives the model of good fit with less number of predictors.
+
+5. We reject two  variables; COUPON and S_INCOME because they show max FALSE values (not a good fit) while running exhaustive search on the subset variables.
+
+### Question 6: Comparing the predictive accuracy 
+```{r Question 6}
+
+ex.lm <- lm(FARE ~ VACATION + SW + NEW + HI + E_INCOME + S_POP + E_POP + SLOT + 
+              GATE + DISTANCE + PAX, data = train.df)
+
+airfare.lm.exhautive.pred <- predict(ex.lm, valid.df)
+airfare.lm.step.predicted <- predict(step.lm, valid.df)
+
+# Finding the accuracy of exhaustive and stepwise regression
+print("Accuracy of Exhaustive regression")
+accuracy(airfare.lm.exhautive.pred, valid.df$FARE)
+
+print("Accuracy of stepwise regression")
+accuracy(airfare.lm.step.predicted, valid.df$FARE)
+```
+Answer 6: RMSE is the standard deviation of the residuals (prediction errors). The lower the RMSE (root mean squared error) for a model, the better is its accuracy.
+
+We observe that the model of 11 predictors created using exhaustive search have RMSE value 36.82363 which is smaller as compared to the RMSE value 36.8617 of stepwise regression for 10 predictors. When we take more predictors the RMSE value decreases.
+
+### Question 7: Using the exhaustive search model to predict the average fare on a route for the test dataset
+```{r Question 7}
+
+predict.df <- data.frame(COUPON = 1.202,NEW = 3, VACATION = 'No', SW = 'No', 
+                         HI=4442.141, S_INCOME = 28760, E_INCOME = 27664, S_POP = 4557004,
+                         E_POP = 3195503, SLOT = 'Free', GATE = 'Free', PAX = 12782, 
+DISTANCE = 1976)
+
+print("Average Fare on the route when SW decided not to cover the route")
+estimated.fare <- predict(ex.lm, predict.df)
+estimated.fare
+
+```
+### Question 8: The reduction in average fare on the route if SW decides to serve the route
+```{r Question 8}
+
+predict2.df <- data.frame(COUPON = 1.202,NEW = 3, VACATION = 'No', SW = 'Yes', 
+                          HI=4442.141, S_INCOME = 28760, E_INCOME = 27664, S_POP = 4557004,
+                          E_POP = 3195503, SLOT = 'Free', GATE = 'Free', PAX = 12782, 
+                          DISTANCE = 1976)
+estimated.fare.sw <- predict(ex.lm,predict2.df)
+
+print("Average Fare on the route when SW decided to cover the route")
+estimated.fare.sw
+
+print("Reduction in average fare if SW decides to cover the route")
+reduction <- estimated.fare - estimated.fare.sw
+reduction
+```
+Answer 8:If southwest covers the same route then the Fare reduces to $207.1558 by 40.57159, instead of the previous 247.684 dollars.
+
+### Question 9: Using leaps package, run backward selection regression to reduce the number of predictors.
+```{r Question 9}
+
+airfare.back.lm <- regsubsets(FARE~., train.df, nbest =1, nvmax = dim(airfare.df)[2],
+                              method = "backward")
+sum.back <- summary(airfare.back.lm)
+sum.back$which
+sum.back$adjr2
+sum.back$cp
+
+ex.lm.backward <- lm(FARE ~ VACATION + SW + HI + E_INCOME + S_POP + E_POP + SLOT + 
+              GATE + DISTANCE + PAX, data = train.df)
+
+af.lm.backward.pred <- predict(ex.lm.backward, valid.df)
+accuracy(af.lm.backward.pred, valid.df$FARE)
+
+```
+Answer 9: Backward selection starts with all predictors in the model (full model), iteratively removes the least contributive predictors, and stops when you have a model where all predictors are statistically significant.
+
+When the backward selection regression is performed in the first iteration least significant predictor i.e. COUPON will be removed followed by S_INCOME and NEW.
+The value of mallow cp till variable 10 is decreasing and from variable 11 the cp value is increasing. So we just include 11 predictors in the model  which are: NEW, VACATIONYes, SWYes,HI, E_INCOME, S_POP, E_POP, SLOTFree, GATEFree, DISTANCE, PAX.
+
+### Question 10: Backward selection model using stepAIC() function
+```{r Question 10}
+library(MASS) ### stepAIC is in the mass package
+
+
+airfare.lm <- lm(FARE ~ ., data = train.df)  
+airfare.back.AIC <- stepAIC(airfare.lm, direction = "backward")
+summary(airfare.back.AIC)
+```
+Answer 10:
+1. AIC function is used to optimize the regression search for the final set of predictors. It takes into account the amount of information loss due to the simplification during regression iterations. AIC also penalizes the model for adding extra variables.
+
+2. Initial AIC Value of the model is 3652.06 when all the predictors are included in the model. The predictor with the lowest AIC value is dropped untill the AIC of the model decreases, when AIC starts increasing the regression is stopped and includes the predictors at that step.
+
+3. In the first step if backward selection regression, AIC =3652.06 and the Predictor with lowest AIC is COUPON = 3650.8
+
+4. In step 2, COUPON is dropped and FARE is regressed against 12 other predictors, AIC value of the model in step 2 is 3650.81 and the predictor with lowest AIC is S_INCOME(3649.8) which is dropped in the next step.
+
+5. In step 3, when S_INCOME is dropped and FARE is regressed against 11 other predictors the AIC value of the model in step 3 is 3649.84 and the predictor with lowest AIC is S_INCOME(3649.8) which is dropped in the next step.
+
+6. In step 3, the lowest AIC value is for NEW and which is dropped in step 4, the AIC value of the model here is 3649.22. We notce that there is drop in AIC of the model. At this point the regression is stopped and model includes all the predictors contributed at this step of regreession.(VACATION,SW,HI,E_INCOME,S_POP,E_POP,SLOT,GATE,DISTANCE, PAX) 
+
+7. The Multiple R-squared IS 0.7803, the model explains 78.03% of variablility and is 78.03% efficient.
+
+8. The p-value for the variables indicates whether the predictor is meaningful or not for the model. The p-value of DISTANCE, VACATION or SW are significantly small hence they are the excellent addition to the model. On the other hand, p-value for SLOT and Ending average personal income is large hence the slot and ending income has no significant effect on the Fare.
+
+9. The value of Estimate for SW is -40.52. The model predicts that the value of FARE decreases by 40.52 if the Southwest Airline serves the route. 
+ 
+10. Similarly, if it's a vacation route then the average fare along the route decreases by 38.7.
+
+11. It is important to note that once the model is found, stepAIC doesn't take into account the p value for significance levels. 
