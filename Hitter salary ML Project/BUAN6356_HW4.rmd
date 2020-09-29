@@ -1,0 +1,333 @@
+---
+title: "BUAN 6356 - Homework 4"
+author: "Group No.9 (Shubhi Kala, Spoorthi Thatipally, Hao-Yu Lin, Loc Nguyen, Tatsat Joshi)"
+date: "4/15/2020"
+output:
+  pdf_document:
+    toc: TRUE
+    toc_depth: 5
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##  Predict salaries of the players
+```{r loadPackages, message=FALSE, warning=FALSE, results='hide'}
+if(!require("pacman")) install.packages("pacman")
+pacman::p_load(rpart, caret, leaps, ISLR, data.table, tree, gbm, magrittr, 
+               dplyr, randomForest, moments)
+search()
+theme_set(theme_classic())
+
+```
+
+
+**Solution to Q1**
+
+### 1. Remove the observation with unknown salary information
+```{r fig.align='center'}
+
+#Using na.omit for removing missing salary
+Hitters.clean = na.omit(Hitters, cols=Salary)
+
+#Total number of observations in Hitters dataset
+dim(Hitters)
+
+#Total number of observations after removing missing values from Salary
+dim(Hitters.clean)
+
+# Number of unknown observations removed 
+sum(is.na(Hitters$Salary))
+```
+* Out of the total 322 observations, there are 59 observations that are having unknown values in Salary variable, Hence 59 observations are removed from the dataset.
+* na.omit() method removes the missing values from the dataset and returns the clean dataset.
+
+
+**Solution to Q2**
+
+### 2. Transform the salaries using a (natural) log transformation
+```{r fig.align='center'}
+Hitters.dt <- data.frame(Hitters.clean)
+
+# Data Transformation using natural log
+Hitters.dt$logSalary = log(Hitters.dt$Salary)
+
+# Plotting histogram to show right skewness before transformation
+hist(Hitters.dt$Salary) #positively skewed data #right skewed
+skewness(Hitters.dt$Salary)
+```
+* Histogram showing the rightly skewed salary variable before log transformation.
+* Skewness before log transformation is 1.58. 
+* If the skewness is less than -1(negatively skewed) or greater than 1(positively skewed), the data are highly skewed.
+```{r}
+# Plotting the histogram to show reduction in the skeweness
+hist(Hitters.dt$logSalary)#less skewed, more bell curve normal distribution
+
+skewness(Hitters.dt$logSalary)
+
+```
+
+* Histogram showing slightly left skewed, more bell curve following normal distribution of the logSalary variable after log transformation.
+* Skewness after log transformation is -0.18. 
+* If the skewness is between -0.5 and 0.5, the data are fairly symmetrical.
+
+* Data is transformed using natural logaritm. They are handy for reducing the skewness in data.
+
+* Improves the performance by transforming highly skewed predictor like here highly right-skewed variables (such as salary) is transformed by taking a log transform.
+
+
+**Solution to Q3**
+
+### 3. Scatterplot with Hits on the y-axis and Years on the x-axis and color coded using logSalary
+```{r fig.align='center'}
+
+# Using ggplot for plotting the scatter plot 
+ggplot(data=Hitters.dt, mapping=aes(x=Years, y=Hits) )+
+  geom_point(aes(color = logSalary)) +
+  labs(
+    x = "Number of years in the major leagues(Years)",
+    y = "Number of hits in 1986(Hits)",
+    color = "logSalary",
+    title = "Relationship between no. of hits and no. of years in the 
+        major leagues",
+    subtitle = "Color coded by logSalary"
+  ) +
+  geom_smooth()
+```
+* Scatterplot of Number of Hits in the year 1986 against Numner of years in the major leagues. A smooth curve shows that when the player plays for large number of years in the major leagues the number of hits played by him goes on decreasing.
+
+* In a same range of year, higher Hits tends to have higher salary, and within same range of hit, higher year tend to have higher salary. 
+
+* In short, both Years and Hits have positive effect on salary and Hits tend to have stronger effect.
+
+* The plot also shows that in the initial years like 1 or 2 the players earn less but their salary goes on increasing with the experience.
+
+
+**Solution to Q4**
+
+### 4. Run a linear regression model of Log Salary on all the predictors
+```{r fig.align='center'}
+
+Hitter.new <-  Hitters.dt[,-19]
+
+search <- regsubsets(logSalary ~ ., data = Hitter.new, nbest = 1, 
+                     nvmax = dim(Hitter.new)[2], method = "exhaustive")
+
+sum <- summary(search)
+
+# show bic values
+sum$bic
+
+# looking for model with the smallest statistic
+plot(sum$bic, xlab = "Number of Variables", ylab = "BIC", type = "l")
+bic_min = which.min(sum$bic)
+bic_min
+points(bic_min, sum$bic[bic_min], col = "red", cex = 2, pch = 20)
+
+data.frame(
+  Adj.R2 = which.max(sum$adjr2),
+  CP = which.min(sum$cp),
+  BIC = which.min(sum$bic)
+)
+
+coef(search, bic_min)
+```
+
+* According to BIC values, -159.277 is the smallest, hence the best performer is the model with 3 variables - Hits, Walks and Years.
+
+* The regsubsets() function has a built-in plot() command which can be used to display the selected variables for the best model with a given number of predictors, ranked according to a chosen statistic. 
+
+
+**Solution to Q5**
+
+### 5.  Create a training data set consisting of 80 percent of the observations, and a test data set consisting of the remaining observations.  
+```{r}
+set.seed(42)
+train.index <- sample(c(1:dim(Hitter.new)[1]), dim(Hitter.new)[1]*0.8)  
+train.df <- Hitter.new[train.index, ]
+test.df <- Hitter.new[-train.index, ]
+
+dim(train.df)
+dim(test.df)
+```
+* Training dataset contains 80% of the total observations = 210
+* Test dataset contains remaining 20% of the total observations = 53
+
+**Solution to Q6**
+
+### 6. Regression tree of log Salary using only Years and Hits variables from the training data set
+```{r}
+
+tree.hitters <- tree(logSalary ~ Years + Hits, data = train.df)
+summary(tree.hitters)
+
+plot(tree.hitters)
+text(tree.hitters, pretty = 0)
+title("Regression Tree")
+
+cv.hitters <- cv.tree(tree.hitters)
+cv.hitters
+```
+* we use the cross-validation function ‘cv.tree()’ to determine the optimal level of tree complexity, i.e., the best tree size; cost complexity pruning is used in order to select a sequence of trees for consideration. The ‘cv.tree()’ function reports the number of terminal nodes of each tree considered (size) as well as the corresponding error rate (dev) and the value of the cost-complexity parameter used.
+
+```{r}
+plot(cv.hitters$size,cv.hitters$dev,type = 'b')
+
+```
+* ‘dev’ corresponds to the cross-validation error rate in this instance. This is the plot of error rate as a function of the size.
+
+```{r fig.align='center'}
+yhat <- predict(tree.hitters, newdata = test.df) 
+
+hitters.test <- test.df$logSalary
+
+plot(yhat,hitters.test)
+abline(0,1)
+
+mean((yhat-hitters.test)^2) # prediction - actual -> mean squared error
+
+# Get the players who are likely to receive highest salaries according to this model
+for(i in 1:nrow(Hitters.clean)){
+  if((Hitters.clean$Years[i] <= 4.5) && (Hitters.clean$Hits[i]<= 103.5)){             
+    print(row.names(Hitters.clean)[i])
+  }
+}
+
+```
+
+* For a regression tree, the predicted response for an observation is given by the mean response of the training observations that belong to the same terminal node.
+
+* In order to build a regression tree, you first use recursive binary splititng to grow a large tree on the training data, stopping only when each terminal node has fewer than some minimum number of observations. 
+
+* At a given internal node, the label of the form a < b (Years< 4.5) indicates the left-hand branch issued from that split, and the right-hand branch corresponds to a >= b (Years > 4.5). The above tree has 8 terminal nodes. Based on above tree plot, ‘Years’ is the most important factor in determining ‘Salary’, and players with less experience earn lower salaries. To predict the ‘log(Salary)’ of a new payer, we only need to check which region this new player belongs to. For instance, a new player with ‘Years’ < 3.5 and ‘Hits’ < 40.5 will have a predicted ‘log(Salary)’ 5.511.
+
+* According to the Regression tree, the Rule which leads to highest salary is Years >= 4.5 AND Hits >= 103.5.
+
+* If we want to predict the log salary of a new player who had been in the league for 5 seasons and had 120 hits the previous season, we would start at the top of the tree and compare 5 years to 4.5 years. Seeing that 5 is not less than 4.5, we choose the right branch. Reaching the next split, we see that 110 hits is greater than 103.5 we choose the right branch at this split, arriving at our log salary estimate of 6.7 for our new player (which corresponds to a salary point estimate of $812,405.80).
+
+* Players who have more experience and more hits tend to make more than players who have less experience and less hits.
+
+* The details of players who are likely to get the highest salaries is listed above.
+
+* Here, the MSE of the model is 0.53.
+
+
+**Solution to Q7**
+
+### 7. Create regression tree using all variables in the dataset and perform boosting.
+```{r fig.align='center'}
+
+tree.hitters <- tree(logSalary ~ ., data = train.df)
+summary(tree.hitters)
+
+plot(tree.hitters)
+text(tree.hitters, pretty = 0)
+title("Regression Tree")
+
+```
+
+Perform boosting on the training set with 1,000 trees for a range of values of the shrinkage parameter lambda. Produce a plot with different shrinkage values on the x-axis and the corresponding training set MSE on the y-axis.
+
+```{r fig.align='center'}
+
+set.seed(42)
+pows = seq(0.001, 0.1, length.out = 20)
+lambdas = pows
+train.err = c()
+test.err = c()
+gbm_models <- list()
+
+for (i in 1:length(lambdas)) {
+  gbm_models[[i]] = gbm(logSalary ~ ., data = train.df, distribution = "gaussian", 
+                        n.trees = 1000, shrinkage = lambdas[i])
+  
+  pred.train = predict(gbm_models[[i]], train.df, n.trees = 1000)
+  train.err[i] = mean((pred.train - train.df$logSalary)^2)
+  
+  pred.test = predict(gbm_models[[i]], test.df, n.trees = 1000)
+  test.err[i] = mean((pred.test - test.df$logSalary)^2)
+}
+
+plot(lambdas, train.err, type = "b", xlab = "Shrinkage values", ylab = "Training MSE")
+
+min(train.err)
+lambdas[which.min(train.err)]
+```
+* The boosted model with shrinkage parameter equals to 0.1 seems to be the best model when it has the lowest MSE = 0.04 in the training set.
+
+**Solution to Q8**
+
+### 8. Produce a plot with different shrinkage values on the x-axis and the corresponding test set MSE on the y-axis.
+```{r fig.align='center'}
+
+set.seed(42)
+
+plot(lambdas, test.err, type = "b", xlab = "Shrinkage values", ylab = "Test MSE")
+
+min(test.err)
+lambdas[which.min(test.err)]
+
+```
+
+* The boosted model with shrinkage parameter equals to 0.0583 seems to be the best model when it has the lowest MSE = 0.318 in the test set.
+
+**Solution to Q9**
+
+### 9. Which variables appear to be the most important predictors in the boosted model?   
+```{r fig.align='center'}
+set.seed(42)
+
+fit.boost <- gbm(logSalary ~., data = train.df, shrinkage = 0.1, n.trees = 1000,
+                 distribution = "gaussian")
+
+par(mar = c(5, 8, 1, 1))
+summary(fit.boost,
+        cBars = 10,
+        method = relative.influence, # also can use permutation.test.gbm
+        las = 2
+)
+
+var_imp <- relative.influence(fit.boost, 
+                              n.trees = 1000,
+                              scale. = TRUE)
+
+data_frame(variable = names(var_imp),
+           importance = var_imp) %>%
+  mutate(variable = reorder(variable, importance)) %>%
+  ggplot(aes(variable, importance)) + 
+  geom_col(width = 0.01, 
+           col = 'skyblue', 
+           alpha = 0.6) + 
+  geom_point(col = 'skyblue') +
+  coord_flip() +
+  labs(y = 'Importance', 
+       x = '', 
+       title = 'Variable Importance for Gradient Boosted Model')
+
+```
+* From the above variable importance plots, we can infer that CAtBat, CRBI and PutOuts are the most importance predictors in the same order for the boosted model.
+
+* It appears that the number of times at bat during their career (CAtBat) is by far
+the most important factor followed by the number of runs battles during their career(CRBI) and Number of put outs in 1986(PutOuts)
+
+
+**Solution to Q10**
+
+### 10.  Apply bagging to the training set. What is the test set MSE for this approach? 
+```{r}
+
+set.seed(42)
+num_var <- dim(train.df)[2] - 1
+bag.hitters <- randomForest(logSalary ~ ., data = train.df, mtry = num_var,
+                            ntree = 1000, importance = TRUE)
+yhat.bag <- predict(bag.hitters, newdata = test.df)
+mean((yhat.bag - test.df$logSalary)^2)
+
+varImpPlot(bag.hitters, main = "Importance of variables")
+
+```
+
+* The MSE for bagging approach is 0.249, which is lower than the MSE for boosting approach which was 0.319 for the test dataset.
+
+* According to the plot, CatBat, CRBI and CRuns are the most important variables in this order.
